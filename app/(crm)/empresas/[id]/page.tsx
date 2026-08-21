@@ -3,7 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { deleteCompany } from "../actions";
 import { getSession } from "@/lib/session";
-import { canDelete, canApprove, canManagePortalAccess } from "@/lib/permissions";
+import { canDelete, canApprove, canManagePortalAccess, canReassign } from "@/lib/permissions";
 import { canAccessCompany } from "@/lib/ownership";
 import { formatMulti } from "@/lib/multivalor";
 import { estadoClienteLabels, estadoClienteClass, monedaLabels } from "@/lib/clientes";
@@ -20,6 +20,14 @@ import { colorObligacion, colorServicioIndividual, type ItemLineaServicio } from
 import LineaServiciosTimeline, {
   LeyendaLineaServicios,
 } from "@/components/servicios/LineaServiciosTimeline";
+import { iniciarAperturaEmpresa, confirmarConstitucion } from "../apertura-actions";
+import { semaforoCaso } from "@/lib/casos";
+import { ensamblarFases } from "@/lib/fases";
+import CasoRow from "@/components/casos/CasoRow";
+import type { FaseTimelineItem } from "@/components/casos/CasoFaseTimeline";
+
+const NOMBRE_OBLIGACION_APERTURA = "Apertura de empresa (SAREN)";
+const PERIODO_APERTURA = "unico";
 
 export const dynamic = "force-dynamic";
 
@@ -87,6 +95,39 @@ export default async function EmpresaDetallePage({
   // tiene contactos/oportunidades) — protección de URL directa.
   if (!(await canAccessCompany(session, id))) notFound();
 
+  // Apertura de empresa: trámite de una sola vez, aparte del loop de
+  // PlanServicio — solo tiene sentido consultar/mostrar si existe la
+  // obligación «SAREN» en el catálogo.
+  const obligacionApertura = await prisma.obligacion.findFirst({
+    where: { nombre: NOMBRE_OBLIGACION_APERTURA },
+  });
+  const casoApertura = obligacionApertura
+    ? await prisma.casoRecurrente.findUnique({
+        where: {
+          companyId_obligacionId_periodoFiscal: {
+            companyId: id,
+            obligacionId: obligacionApertura.id,
+            periodoFiscal: PERIODO_APERTURA,
+          },
+        },
+        include: { analista: { select: { name: true } } },
+      })
+    : null;
+  let fasesApertura: FaseTimelineItem[] = [];
+  if (casoApertura) {
+    const [plantillaApertura, progresoApertura] = await Promise.all([
+      prisma.faseObligacion.findMany({
+        where: { obligacionId: casoApertura.obligacionId },
+        orderBy: { order: "asc" },
+      }),
+      prisma.casoFaseProgreso.findMany({
+        where: { casoId: casoApertura.id },
+        include: { completedBy: { select: { name: true } } },
+      }),
+    ]);
+    fasesApertura = ensamblarFases(plantillaApertura, progresoApertura);
+  }
+
   // Plan de servicios: a cada obligación contratada se le calcula su próxima
   // fecha límite con el motor de F2 (un solo contexto fiscal para todas).
   const ctxFiscal = await contextoFiscal(new Date().getFullYear(), company.municipios);
@@ -121,7 +162,11 @@ export default async function EmpresaDetallePage({
     : null;
 
   const yaEnPlan = new Set(company.plan?.obligaciones.map((po) => po.obligacionId) ?? []);
-  const obligacionesDisponibles = obligaciones.filter((o) => !yaEnPlan.has(o.id));
+  // "unica" (Apertura de empresa) es un trámite de una sola vez, no un
+  // servicio recurrente — nunca se ofrece para agregar al plan.
+  const obligacionesDisponibles = obligaciones.filter(
+    (o) => !yaEnPlan.has(o.id) && o.periodicidad !== "unica"
+  );
 
   // Línea de tiempo de servicios contratados: una obligación del plan cuenta
   // como culminada cuando el caso del PERÍODO EN CURSO ya se presentó; sin
@@ -235,6 +280,64 @@ export default async function EmpresaDetallePage({
           )}
         </div>
       </header>
+
+      {/* Apertura de empresa: trámite de una sola vez, antes de que el
+          cliente tenga RIF. Reutiliza CasoRow — mismo checklist de fases y
+          línea de tiempo que la bandeja de /casos. */}
+      {(casoApertura || !company.rif) && obligacionApertura && (
+        <section className="space-y-2">
+          <h2 className="text-sm font-semibold text-slate-800">Apertura de empresa</h2>
+          {casoApertura ? (
+            <>
+              <CasoRow
+                caso={{
+                  id: casoApertura.id,
+                  periodoFiscal: casoApertura.periodoFiscal,
+                  estado: casoApertura.estado,
+                  fechaLimite: casoApertura.fechaLimite,
+                  fechaSolicitudSoportes: casoApertura.fechaSolicitudSoportes,
+                  fechaPresentacion: casoApertura.fechaPresentacion,
+                  evidenciaUrl: casoApertura.evidenciaUrl,
+                  causaAtraso: casoApertura.causaAtraso,
+                  notas: casoApertura.notas,
+                  analistaId: casoApertura.analistaId,
+                  supervisorId: casoApertura.supervisorId,
+                  analistaNombre: casoApertura.analista?.name ?? null,
+                  companyId: company.id,
+                  companyName: company.name,
+                  obligacionNombre: obligacionApertura.nombre,
+                  enteReceptor: obligacionApertura.enteReceptor,
+                }}
+                semaforo={semaforoCaso(casoApertura.fechaLimite, casoApertura.estado)}
+                usuarios={usuarios}
+                puedeReasignar={canReassign(session?.role)}
+                fases={fasesApertura}
+              />
+              {casoApertura.estado === "presentado" && company.estadoCliente === "lead" && (
+                <form action={confirmarConstitucion}>
+                  <input type="hidden" name="companyId" value={company.id} />
+                  <button
+                    type="submit"
+                    className="rounded-lg bg-teal-600 px-3 py-2 text-sm font-semibold text-white hover:bg-teal-700"
+                  >
+                    Confirmar constitución (pasa a Prospecto)
+                  </button>
+                </form>
+              )}
+            </>
+          ) : (
+            <form action={iniciarAperturaEmpresa}>
+              <input type="hidden" name="companyId" value={company.id} />
+              <button
+                type="submit"
+                className="rounded-lg border border-teal-300 bg-teal-50 px-4 py-2.5 text-sm font-semibold text-teal-700 hover:bg-teal-100"
+              >
+                Iniciar apertura de empresa
+              </button>
+            </form>
+          )}
+        </section>
+      )}
 
       {/* Línea de tiempo de servicios contratados — mismo componente que ve
           el cliente en su portal */}

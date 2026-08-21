@@ -26,7 +26,7 @@ export type ResultadoGeneracion = {
   detalle: string[];
 };
 
-type CasoNuevo = {
+export type CasoNuevo = {
   companyId: string;
   obligacionId: string;
   periodoFiscal: string;
@@ -37,7 +37,10 @@ type CasoNuevo = {
 
 // Crea el caso si no existe. Devuelve el registro creado o null si ya estaba
 // (choque del índice único: dos procesos abriendo el mismo período a la vez).
-async function abrirCaso(caso: CasoNuevo) {
+// Exportada: también la usa la apertura de empresa (Etapa 3.6 «Mis
+// Consultores», app/(crm)/empresas/apertura-actions.ts) fuera del loop de
+// PlanServicio.
+export async function abrirCaso(caso: CasoNuevo) {
   const existente = await prisma.casoRecurrente.findUnique({
     where: {
       companyId_obligacionId_periodoFiscal: {
