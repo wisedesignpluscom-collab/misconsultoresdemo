@@ -279,6 +279,7 @@ export async function guardarParametrosLegales(formData: FormData) {
     cestaticketMensualOverride: num("cestaticketMensualOverride"),
     valorUTOverride: num("valorUTOverride"),
     jornadaSemanalHorasOverride: num("jornadaSemanalHorasOverride"),
+    claseRiesgoIvss: (formData.get("claseRiesgoIvss") as string)?.trim() || null,
   };
   await prisma.configuracionNomina.upsert({
     where: { companyId },
@@ -295,8 +296,9 @@ export async function crearAporte(formData: FormData) {
   const tipo = formData.get("tipo") as string;
   const porcentaje = Number(formData.get("porcentaje"));
   if (!nombre || !(TIPOS_APORTE as readonly string[]).includes(tipo) || !Number.isFinite(porcentaje) || porcentaje < 0) return;
+  const cuentaContable = (formData.get("cuentaContable") as string)?.trim() || null;
 
-  await prisma.aporteLegal.create({ data: { companyId, nombre, tipo, porcentaje } });
+  await prisma.aporteLegal.create({ data: { companyId, nombre, tipo, porcentaje, cuentaContable } });
   revalidatePath(`/nomina/${companyId}/configuracion`);
 }
 
@@ -311,10 +313,11 @@ export async function actualizarAporte(formData: FormData) {
   const nombre = (formData.get("nombre") as string)?.trim();
   const porcentaje = Number(formData.get("porcentaje"));
   if (!nombre || !Number.isFinite(porcentaje) || porcentaje < 0) return;
+  const cuentaContable = (formData.get("cuentaContable") as string)?.trim() || null;
 
   await prisma.aporteLegal.update({
     where: { id },
-    data: { nombre, porcentaje, activo: formData.get("activo") === "on" },
+    data: { nombre, porcentaje, cuentaContable, activo: formData.get("activo") === "on" },
   });
   revalidatePath(`/nomina/${companyId}/configuracion`);
 }

@@ -4,10 +4,9 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 // Sub-navegación horizontal presente en toda la sección de nómina de un
-// cliente. "Vista empleado" / "Mi panel" / "Marcar asistencia" / "Mis
-// recibos" son autoservicio del trabajador (fuera del alcance 2.1-2.7 del
-// analista) — quedan visibles per la especificación pero deshabilitadas
-// hasta que el proyecto llegue a esa pieza.
+// cliente. El autoservicio del trabajador ("Vista empleado" / "Mi panel" /
+// "Marcar asistencia" / "Mis recibos") se retiró de aquí: está fuera del
+// alcance del analista y no tenía ruta real todavía.
 export default function NominaSubNav({ companyId }: { companyId: string }) {
   const pathname = usePathname();
   const home = `/nomina/${companyId}`;
@@ -23,16 +22,6 @@ export default function NominaSubNav({ companyId }: { companyId: string }) {
       >
         Nóminas
       </Link>
-      <span className="mx-1 h-4 w-px bg-slate-200" />
-      {["Vista empleado", "Mi panel", "Marcar asistencia", "Mis recibos"].map((label) => (
-        <span
-          key={label}
-          title="Próximamente"
-          className="cursor-not-allowed rounded-full px-4 py-1.5 text-sm font-medium text-slate-300"
-        >
-          {label}
-        </span>
-      ))}
     </nav>
   );
 }

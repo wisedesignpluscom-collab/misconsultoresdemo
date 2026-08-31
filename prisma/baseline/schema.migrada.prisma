@@ -990,6 +990,12 @@ model ConfiguracionNomina {
   cuentaNominaPorPagarUSD   String?
   cuentaDeduccionesPorPagar String?
 
+  // ── Clase de riesgo IVSS (aporte patronal) ──────────────────────────────
+  // Solo documenta la clasificación; el % patronal real que se usa para
+  // calcular es el editable en AporteLegal (ivss_patronal) — este campo es la
+  // nota de por qué se puso ese %, no un valor que dispare el cálculo.
+  claseRiesgoIvss String?
+
   // ── 2.4 — Compensación USD ───────────────────────────────────────────────
   // Objetivo por defecto de la empresa; Trabajador.objetivoUsd lo sobre-escribe por empleado.
   compensacionUsdActiva   Boolean @default(false)
@@ -1060,11 +1066,14 @@ model AporteLegal {
   id         String   @id @default(cuid())
   companyId  String
   company    Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  // trabajador | patronal
+  // trabajador | patronal | retencion
   tipo       String
   clave      String?
   nombre     String
   porcentaje Float
+  // Código del plan de cuentas al que se asienta este concepto — cada aporte
+  // se asigna a la suya (antes solo existían 4 cuentas globales por cliente).
+  cuentaContable String?
   activo     Boolean  @default(true)
   isSystem   Boolean  @default(false)
   createdAt  DateTime @default(now())

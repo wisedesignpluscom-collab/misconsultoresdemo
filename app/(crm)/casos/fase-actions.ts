@@ -10,6 +10,7 @@ import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/session";
 import { canDelete, recurringCaseScope } from "@/lib/permissions";
 import { ensamblarFases, parseCampos, serializeValores, validarValoresFase } from "@/lib/fases";
+import { avanzarEstadoCaso } from "./actions";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 
@@ -65,6 +66,23 @@ export async function completarFase(formData: FormData) {
       valores: serializeValores(valores),
     },
   });
+
+  // El estado ya no lo mueve un botón manual: avanza solo con la checklist.
+  // Primera fase completada → sale de "esperando al cliente"; última fase
+  // completada → pasa a revisión (el cierre a "presentado" sigue siendo
+  // deliberado, con fecha y comprobante).
+  const completadasAntes = completadas.size;
+  const totalFases = fases.length;
+  if (completadasAntes === 0 && (acceso.caso.estado === "pendiente_cliente" || acceso.caso.estado === "vencido")) {
+    await avanzarEstadoCaso(casoId, "en_proceso", acceso.session, acceso.caso);
+  } else if (
+    completadasAntes + 1 === totalFases &&
+    acceso.caso.estado !== "en_revision" &&
+    acceso.caso.estado !== "presentado"
+  ) {
+    await avanzarEstadoCaso(casoId, "en_revision", acceso.session, acceso.caso);
+  }
+
   revalidatePath("/casos");
 }
 

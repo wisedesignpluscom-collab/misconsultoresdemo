@@ -9,6 +9,7 @@ export type AporteRow = {
   tipo: string;
   nombre: string;
   porcentaje: number;
+  cuentaContable: string | null;
   activo: boolean;
   isSystem: boolean;
 };
@@ -42,6 +43,9 @@ function Grupo({
                 <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">
                   {a.porcentaje}%
                 </span>
+                <span className="text-xs text-slate-400">
+                  {a.cuentaContable || "Sin cuenta contable"}
+                </span>
               </span>
               {puedeEliminar && !a.isSystem && (
                 <form action={eliminarAporte}>
@@ -70,6 +74,12 @@ function Grupo({
                   required
                   className={`${inputClass} w-24`}
                 />
+                <input
+                  name="cuentaContable"
+                  defaultValue={a.cuentaContable ?? ""}
+                  placeholder="Cuenta contable"
+                  className={`${inputClass} w-48`}
+                />
                 <label className="flex items-center gap-2 text-xs text-slate-600">
                   <input type="checkbox" name="activo" defaultChecked={a.activo} className="h-4 w-4" />
                   Activo
@@ -94,6 +104,7 @@ function Grupo({
             <input type="hidden" name="tipo" value={tipo} />
             <input name="nombre" placeholder="Nombre" required className={`${inputClass} flex-1`} />
             <input name="porcentaje" type="number" min="0" step="0.01" placeholder="%" required className={`${inputClass} w-24`} />
+            <input name="cuentaContable" placeholder="Cuenta contable" className={`${inputClass} w-48`} />
             <button
               type="submit"
               className="rounded-lg bg-teal-600 px-3 py-2 text-xs font-semibold text-white hover:bg-teal-700"

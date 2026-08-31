@@ -46,7 +46,7 @@ export const CONCEPTOS_ESTANDAR: ConceptoSemilla[] = [
 ];
 
 // ── Aportes de ley — catálogo estándar (Venezuela) ──────────────────────────
-export type AporteSemilla = { clave: string; tipo: "trabajador" | "patronal"; nombre: string; porcentaje: number };
+export type AporteSemilla = { clave: string; tipo: "trabajador" | "patronal" | "retencion"; nombre: string; porcentaje: number };
 
 export const APORTES_ESTANDAR: AporteSemilla[] = [
   { clave: "ivss_trabajador", tipo: "trabajador", nombre: "IVSS", porcentaje: 4 },
@@ -56,14 +56,24 @@ export const APORTES_ESTANDAR: AporteSemilla[] = [
   { clave: "rpe_patronal", tipo: "patronal", nombre: "Régimen Prestacional de Empleo (paro forzoso)", porcentaje: 2 },
   { clave: "faov_patronal", tipo: "patronal", nombre: "FAOV", porcentaje: 2 },
   { clave: "inces_patronal", tipo: "patronal", nombre: "INCES", porcentaje: 2 },
+  // Retención de ISLR sobre nómina: a diferencia de los aportes de ley, no es
+  // un % fijo (depende de la tabla progresiva del trabajador) — nace en 0% y
+  // el analista lo ajusta por corrida hasta que el cálculo real exista.
+  { clave: "islr_retencion", tipo: "retencion", nombre: "Retención ISLR", porcentaje: 0 },
 ];
 
-export const TIPOS_APORTE = ["trabajador", "patronal"] as const;
+// El % patronal de IVSS varía según la clase de riesgo del empleador (I a V,
+// tabla del IVSS) — no se fija en el código: "ivss_patronal" nace en 10% y se
+// edita a mano por cliente (ver claseRiesgoIvss en ConfiguracionNomina, que
+// solo documenta por qué se puso ese número).
+
+export const TIPOS_APORTE = ["trabajador", "patronal", "retencion"] as const;
 export type TipoAporte = (typeof TIPOS_APORTE)[number];
 
 export const tipoAporteLabels: Record<string, string> = {
   trabajador: "Aportes del trabajador",
   patronal: "Aportes patronales",
+  retencion: "Retenciones",
 };
 
 // ── Cuentas contables — plantilla estándar para "Autoasignar" ──────────────
