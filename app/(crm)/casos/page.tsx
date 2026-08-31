@@ -110,6 +110,13 @@ export default async function CasosPage({
     return qs ? `/casos?${qs}` : "/casos";
   };
 
+  const qsActual = (() => {
+    const params = new URLSearchParams();
+    for (const [k, v] of Object.entries(filtros)) if (v && k !== "faseError") params.set(k, v);
+    const qs = params.toString();
+    return qs ? `?${qs}` : "";
+  })();
+
   const chip = (activo: boolean) =>
     `rounded-full px-3 py-1 text-xs font-medium transition-colors ${
       activo ? "bg-slate-800 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
@@ -125,17 +132,26 @@ export default async function CasosPage({
             el del período siguiente con su fecha ya calculada.
           </p>
         </div>
-        {puedeGestionar && (
-          <form action={generarCasos}>
-            <button
-              type="submit"
-              title={`Abre los casos de ${etiquetaPeriodo(periodoActual("mensual", hoy))} de los planes activos`}
-              className="rounded-lg bg-teal-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-teal-700"
-            >
-              Abrir casos del período
-            </button>
-          </form>
-        )}
+        <div className="flex flex-wrap items-center gap-2">
+          <Link
+            href={`/imprimir/casos${qsActual}`}
+            target="_blank"
+            className="rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-600 shadow-sm transition-colors hover:bg-slate-50"
+          >
+            Descargar reporte (PDF)
+          </Link>
+          {puedeGestionar && (
+            <form action={generarCasos}>
+              <button
+                type="submit"
+                title={`Abre los casos de ${etiquetaPeriodo(periodoActual("mensual", hoy))} de los planes activos`}
+                className="rounded-lg bg-teal-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-teal-700"
+              >
+                Abrir casos del período
+              </button>
+            </form>
+          )}
+        </div>
       </header>
 
       <section className="grid grid-cols-2 gap-4 sm:grid-cols-4">

@@ -3,11 +3,7 @@
 // El <details> nativo evita convertir la lista en componente cliente.
 
 import Link from "next/link";
-import {
-  cambiarEstadoCaso,
-  presentarCaso,
-  actualizarCaso,
-} from "@/app/(crm)/casos/actions";
+import { presentarCaso, actualizarCaso } from "@/app/(crm)/casos/actions";
 import {
   CAUSAS_ATRASO,
   causaAtrasoLabels,
@@ -16,7 +12,6 @@ import {
   estadoCasoClass,
   semaforoClass,
   semaforoLabels,
-  siguienteEstadoCaso,
   type Semaforo,
 } from "@/lib/casos";
 import { etiquetaPeriodo } from "@/lib/fiscal/vencimientos";
@@ -73,8 +68,11 @@ export default function CasoRow({
   puedeReasignar: boolean;
   fases: FaseTimelineItem[];
 }) {
-  const siguiente = siguienteEstadoCaso(caso.estado);
-  const vaAPresentar = siguiente === "presentado";
+  // El estado intermedio (pendiente_cliente → en_proceso → en_revision) avanza
+  // solo, al completar la checklist de fases (ver fase-actions.ts); esta vista
+  // ya no ofrece un botón para saltarlo a mano. "Presentado" sigue siendo una
+  // acción deliberada, disponible desde cualquier estado que no sea el cierre.
+  const puedePresentar = caso.estado !== "presentado";
 
   return (
     <li className="rounded-xl border border-slate-200 bg-white shadow-sm">
@@ -112,19 +110,6 @@ export default function CasoRow({
         >
           {estadoCasoLabels[caso.estado] ?? caso.estado}
         </span>
-
-        {siguiente && !vaAPresentar && (
-          <form action={cambiarEstadoCaso}>
-            <input type="hidden" name="id" value={caso.id} />
-            <input type="hidden" name="estado" value={siguiente} />
-            <button
-              type="submit"
-              className="shrink-0 rounded-lg bg-teal-50 px-3 py-1.5 text-xs font-semibold text-teal-700 hover:bg-teal-100"
-            >
-              {estadoCasoLabels[siguiente]} →
-            </button>
-          </form>
-        )}
       </div>
 
       <details className="border-t border-slate-100">
@@ -135,7 +120,7 @@ export default function CasoRow({
         <div className="space-y-4 px-4 pb-4">
           <CasoFaseTimeline casoId={caso.id} fases={fases} puedeReabrir={puedeReasignar} />
 
-          {vaAPresentar ? (
+          {puedePresentar ? (
             <form action={presentarCaso} className="grid gap-2 rounded-lg border border-teal-100 bg-teal-50/40 p-3 sm:grid-cols-4">
               <input type="hidden" name="id" value={caso.id} />
               <label className="sm:col-span-1">

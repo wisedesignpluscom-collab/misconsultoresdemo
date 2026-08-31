@@ -60,27 +60,30 @@ async function emitirPorEstado(id: string, estado: string, session: { id: string
   });
 }
 
-export async function cambiarEstadoCaso(formData: FormData) {
-  const id = formData.get("id") as string;
-  const acceso = await casoAccesible(id);
-  if (!acceso) return;
-  const estado = formData.get("estado") as string;
+// El estado intermedio ya no se cambia a mano desde la bandeja: avanza solo al
+// completar la checklist de fases (ver fase-actions.ts → completarFase). Este
+// helper queda como la única puerta de escritura del estado, para que la
+// checklist y cualquier otro disparador futuro sellen los mismos hitos y
+// emitan el mismo evento que antes emitía el botón manual.
+export async function avanzarEstadoCaso(
+  id: string,
+  estado: string,
+  session: { id: string; role: string },
+  casoActual: { fechaRecepcionCompleta: Date | null; fechaPresentacion: Date | null }
+) {
   if (!esEstadoCaso(estado)) return;
 
-  // Los hitos se sellan solos al alcanzar cada estado: el analista no tiene que
-  // acordarse de poner la fecha.
   const ahora = new Date();
   const data: Record<string, unknown> = { estado };
-  if (estado === "en_proceso" && !acceso.caso.fechaRecepcionCompleta) {
+  if (estado === "en_proceso" && !casoActual.fechaRecepcionCompleta) {
     data.fechaRecepcionCompleta = ahora;
   }
   if (estado === "presentado") {
-    data.fechaPresentacion = acceso.caso.fechaPresentacion ?? ahora;
+    data.fechaPresentacion = casoActual.fechaPresentacion ?? ahora;
   }
 
   await prisma.casoRecurrente.update({ where: { id }, data });
-  await emitirPorEstado(id, estado, acceso.session);
-  revalidatePath("/casos");
+  await emitirPorEstado(id, estado, session);
 }
 
 // Presentar es el paso que cierra el período y dispara el clonado del siguiente.

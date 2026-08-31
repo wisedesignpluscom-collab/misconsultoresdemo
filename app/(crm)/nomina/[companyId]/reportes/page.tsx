@@ -85,6 +85,13 @@ export default async function ReportesNominaPage({
           <button type="submit" className="rounded-lg bg-teal-600 px-4 py-2 text-xs font-semibold text-white hover:bg-teal-700">
             Filtrar
           </button>
+          <Link
+            href={`/imprimir/recibos?companyId=${companyId}&desde=${desdeParam || inicioMesISO()}&hasta=${hastaParam || hoyISO()}`}
+            target="_blank"
+            className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+          >
+            Exportar / imprimir recibos de pago
+          </Link>
         </form>
       </div>
 
@@ -125,7 +132,9 @@ export default async function ReportesNominaPage({
         <div className="p-5">
           {activa === "costo_corrida" && <TablaCostoPorCorrida corridas={corridas} />}
           {activa === "asistencia" && <TablaAsistencia companyId={companyId} desde={desde} hasta={hasta} />}
-          {activa === "cuentas_por_pagar" && <TablaCuentasPorPagar companyId={companyId} totalBruto={totalBruto} />}
+          {activa === "cuentas_por_pagar" && (
+            <TablaCuentasPorPagar companyId={companyId} totalBruto={totalBruto} desde={desde} hasta={hasta} />
+          )}
           {activa === "lottt" && <TablaLottt companyId={companyId} desde={desde} hasta={hasta} />}
         </div>
       </div>
@@ -209,34 +218,132 @@ async function TablaAsistencia({ companyId, desde, hasta }: { companyId: string;
   );
 }
 
-async function TablaCuentasPorPagar({ companyId, totalBruto }: { companyId: string; totalBruto: number }) {
-  const aportes = await prisma.aporteLegal.findMany({ where: { companyId, tipo: "trabajador", activo: true }, orderBy: { nombre: "asc" } });
+type FilaCuentaPorPagar = {
+  nombre: string;
+  pctTrabajador: number | null;
+  montoTrabajador: number;
+  pctPatronal: number | null;
+  montoPatronal: number;
+  cuentaTrabajador: string | null;
+  cuentaPatronal: string | null;
+  accion: "faov_txt" | "islr_xml" | null;
+};
+
+async function TablaCuentasPorPagar({
+  companyId,
+  totalBruto,
+  desde,
+  hasta,
+}: {
+  companyId: string;
+  totalBruto: number;
+  desde: Date;
+  hasta: Date;
+}) {
+  const aportes = await prisma.aporteLegal.findMany({ where: { companyId, activo: true }, orderBy: { nombre: "asc" } });
   if (aportes.length === 0 || totalBruto === 0) {
     return <p className="text-sm text-slate-400">Sin aportes de ley activos, o sin bruto en el rango para estimar.</p>;
   }
+
+  // Agrupa por ente/concepto (el mismo nombre, "IVSS", tiene fila de trabajador
+  // y de patronal por separado en AporteLegal) para mostrar ambas tasas juntas
+  // y sumarlas en un solo "Estimado por pagar".
+  const filas = new Map<string, FilaCuentaPorPagar>();
+  for (const a of aportes) {
+    const fila = filas.get(a.nombre) ?? {
+      nombre: a.nombre,
+      pctTrabajador: null,
+      montoTrabajador: 0,
+      pctPatronal: null,
+      montoPatronal: 0,
+      cuentaTrabajador: null,
+      cuentaPatronal: null,
+      accion: null,
+    };
+    const monto = (totalBruto * a.porcentaje) / 100;
+    if (a.tipo === "patronal") {
+      fila.pctPatronal = a.porcentaje;
+      fila.montoPatronal = monto;
+      fila.cuentaPatronal = a.cuentaContable;
+    } else {
+      // "trabajador" y "retencion" comparten la columna de retenido: ambos se
+      // descuentan del trabajador, la diferencia es solo si tienen contraparte patronal.
+      fila.pctTrabajador = a.porcentaje;
+      fila.montoTrabajador = monto;
+      fila.cuentaTrabajador = a.cuentaContable;
+    }
+    if (a.nombre.toLowerCase().includes("faov")) fila.accion = "faov_txt";
+    if (a.nombre.toLowerCase().includes("islr")) fila.accion = "islr_xml";
+    filas.set(a.nombre, fila);
+  }
+
+  const qs = new URLSearchParams({
+    companyId,
+    desde: desde.toISOString().slice(0, 10),
+    hasta: hasta.toISOString().slice(0, 10),
+  }).toString();
+
   return (
     <div>
       <p className="mb-3 text-xs text-slate-400">
-        Estimado con las tasas vigentes hoy sobre el bruto del rango — no reconstruye las tasas históricas de cada corrida.
+        Estimado con las tasas vigentes hoy sobre el bruto del rango — no reconstruye las tasas históricas de cada
+        corrida. Selecciona una fila para ver su cuenta contable.
       </p>
       <table className="min-w-full text-sm">
         <thead className="bg-slate-50 text-left text-xs text-slate-500">
           <tr>
             <th className="px-3 py-2">Ente / concepto</th>
-            <th className="px-3 py-2">Tasa</th>
+            <th className="px-3 py-2">% Trabajador</th>
+            <th className="px-3 py-2">Retenido</th>
+            <th className="px-3 py-2">% Aporte patronal</th>
+            <th className="px-3 py-2">Aporte patronal</th>
             <th className="px-3 py-2">Estimado por pagar</th>
+            <th className="px-3 py-2">Acción</th>
           </tr>
         </thead>
         <tbody>
-          {aportes.map((a) => (
-            <tr key={a.id} className="border-t border-slate-100">
-              <td className="px-3 py-2 font-medium text-slate-800">{a.nombre}</td>
-              <td className="px-3 py-2">{a.porcentaje}%</td>
-              <td className="px-3 py-2">{money((totalBruto * a.porcentaje) / 100)}</td>
+          {[...filas.values()].map((f) => (
+            <tr key={f.nombre} className="border-t border-slate-100 align-top">
+              <td className="px-3 py-2 font-medium text-slate-800">
+                <details>
+                  <summary className="cursor-pointer select-none hover:text-teal-700">{f.nombre}</summary>
+                  <p className="mt-1 max-w-[16rem] text-xs font-normal text-slate-500">
+                    Cuenta trabajador: {f.cuentaTrabajador || "sin asignar"}
+                    <br />
+                    Cuenta patronal: {f.cuentaPatronal || "sin asignar"}
+                  </p>
+                </details>
+              </td>
+              <td className="px-3 py-2">{f.pctTrabajador !== null ? `${f.pctTrabajador}%` : "—"}</td>
+              <td className="px-3 py-2">{money(f.montoTrabajador)}</td>
+              <td className="px-3 py-2">{f.pctPatronal !== null ? `${f.pctPatronal}%` : "—"}</td>
+              <td className="px-3 py-2">{money(f.montoPatronal)}</td>
+              <td className="px-3 py-2 font-semibold">{money(f.montoTrabajador + f.montoPatronal)}</td>
+              <td className="px-3 py-2">
+                {f.accion === "faov_txt" && (
+                  <a
+                    href={`/api/nomina/faov-txt?${qs}`}
+                    className="rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-200"
+                  >
+                    Emitir .txt FAOV
+                  </a>
+                )}
+                {f.accion === "islr_xml" && (
+                  <a
+                    href={`/api/nomina/islr-xml?${qs}`}
+                    className="rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-200"
+                  >
+                    Emitir XML ISLR
+                  </a>
+                )}
+              </td>
             </tr>
           ))}
         </tbody>
       </table>
+      <p className="mt-3 text-xs text-slate-400">
+        Las cuentas contables se editan por concepto en Configuración → Aportes de ley.
+      </p>
     </div>
   );
 }

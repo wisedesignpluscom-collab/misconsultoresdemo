@@ -175,6 +175,13 @@ export default async function FacturacionPage({
                   </p>
                 </div>
                 <p className="text-sm font-bold text-slate-800">{formatMonto(f.monto, f.moneda)}</p>
+                <Link
+                  href={`/imprimir/factura/${f.id}`}
+                  target="_blank"
+                  className="shrink-0 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                >
+                  Proforma
+                </Link>
                 <span
                   className={`shrink-0 rounded-full px-2.5 py-0.5 text-xs font-semibold ${
                     estadoPagoClass[f.estadoPago] ?? "bg-slate-100 text-slate-600"

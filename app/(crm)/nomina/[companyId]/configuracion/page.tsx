@@ -384,6 +384,18 @@ export default async function ConfiguracionNominaPage({
                     Jornada semanal (horas)
                     <input name="jornadaSemanalHorasOverride" type="number" min="0" step="0.5" defaultValue={config?.jornadaSemanalHorasOverride ?? ""} className={`${inputClass} mt-1 w-full`} />
                   </label>
+                  <label className="text-xs font-medium text-slate-500">
+                    Clase de riesgo IVSS (aporte patronal)
+                    <input
+                      name="claseRiesgoIvss"
+                      placeholder="Ej. Clase II — riesgo medio"
+                      defaultValue={config?.claseRiesgoIvss ?? ""}
+                      className={`${inputClass} mt-1 w-full`}
+                    />
+                    <span className="mt-1 block text-[11px] text-slate-400">
+                      Solo referencia — el % que se usa para calcular es el de IVSS en &quot;Aportes patronales&quot; abajo.
+                    </span>
+                  </label>
                 </div>
                 <button
                   type="submit"
