@@ -52,6 +52,9 @@ export async function canAccessCompany(s: Sess, companyId: string) {
         { supervisorId: s.id },
         { contacts: { some: { ownerId: s.id } } },
         { deals: { some: { ownerId: s.id } } },
+        // Espeja companyScope (lib/permissions.ts): asignación automática por
+        // chat — el especialista con tarea abierta también puede entrar.
+        { contacts: { some: { tasks: { some: { ownerId: s.id, title: { startsWith: "Nueva asignación (chat)" } } } } } },
       ],
     },
     select: { id: true },

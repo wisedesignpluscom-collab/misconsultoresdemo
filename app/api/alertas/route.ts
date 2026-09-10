@@ -53,11 +53,13 @@ export async function GET() {
       orderBy: { updatedAt: "asc" },
       take: 5,
     }),
-    // Avisos de workflows (acción «enviar_notificacion») sin leer
+    // Avisos de workflows (acción «enviar_notificacion») sin leer — broadcast
+    // (sin destinatario) + los dirigidos puntualmente a quien pregunta (ej.
+    // "te asignaron esta tarea por chat", ver lib/chat.ts → avisarUrgente).
     prisma.notification.findMany({
-      where: { readAt: null },
+      where: { readAt: null, OR: [{ userId: null }, { userId: session.id }] },
       orderBy: { createdAt: "desc" },
-      take: 5,
+      take: 10,
     }),
     // Mensajes del cliente (portal) sin leer, dentro de la cartera de quien pide
     prisma.mensajeChat.findMany({
@@ -84,6 +86,7 @@ export async function GET() {
       titulo: n.title,
       cuerpo: n.body,
       url: n.url,
+      urgente: n.urgente,
     })),
     aprobaciones: pendingApprovals.map((d) => ({
       id: d.id,
@@ -106,11 +109,14 @@ export async function GET() {
       titulo: d.title,
       dias: Math.floor((now.getTime() - d.updatedAt.getTime()) / 86400000),
     })),
+    // Siempre "urgente" a ojos del banner grande — un mensaje de cliente sin
+    // leer merece la alerta encima de cualquier módulo, no solo la campanita.
     mensajesCliente: mensajesCliente.map((m) => ({
       id: m.id,
       companyId: m.company.id,
       cliente: m.company.name,
       extracto: m.contenido.length > 80 ? `${m.contenido.slice(0, 80)}…` : m.contenido,
+      urgente: true,
     })),
   });
 }

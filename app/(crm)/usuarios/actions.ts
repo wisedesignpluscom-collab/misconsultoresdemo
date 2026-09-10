@@ -5,6 +5,7 @@ import { getSession } from "@/lib/session";
 import { revalidatePath } from "next/cache";
 import bcrypt from "bcryptjs";
 import { ROLES } from "@/lib/permissions";
+import { multiFromFormData } from "@/lib/multivalor";
 
 async function requireAdmin() {
   const session = await getSession();
@@ -80,6 +81,23 @@ export async function toggleUserActive(formData: FormData) {
       active: !target.active,
       ...(target.active ? {} : { failedAttempts: 0, lockedUntil: null }),
     },
+  });
+
+  revalidatePath("/usuarios");
+}
+
+// Especialidad del profesional (Tributario/Laboral/Legal/Facturación/Auditoría)
+// — de aquí sale a quién asigna el chat del portal una tarea automática (ver
+// lib/chat.ts) y a quién avisa por posible cobro adicional.
+export async function actualizarEspecialidades(formData: FormData) {
+  await requireAdmin();
+
+  const id = formData.get("userId") as string;
+  if (!id) return;
+
+  await prisma.user.update({
+    where: { id },
+    data: { especialidad: multiFromFormData(formData, "especialidad") },
   });
 
   revalidatePath("/usuarios");

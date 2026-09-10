@@ -1,8 +1,14 @@
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/session";
 import { redirect } from "next/navigation";
-import { createUser, updatePassword, deleteUser, toggleUserActive } from "./actions";
+import { createUser, updatePassword, deleteUser, toggleUserActive, actualizarEspecialidades } from "./actions";
 import { roleLabels, ROLES } from "@/lib/permissions";
+import { parseMulti } from "@/lib/multivalor";
+
+// Vocabulario fijo de especialidades (ver el comentario de User.especialidad
+// en prisma/schema.prisma). De aquí sale a quién asigna el chat del portal
+// una tarea automática (lib/chat.ts) y a quién avisa el aviso de facturación.
+const ESPECIALIDADES = ["Tributario", "Laboral", "Legal", "Facturación", "Auditoría"] as const;
 
 export const dynamic = "force-dynamic";
 
@@ -88,6 +94,7 @@ export default async function UsuariosPage() {
             <tr>
               <th className="px-4 py-3 font-medium">Usuario</th>
               <th className="px-4 py-3 font-medium">Rol</th>
+              <th className="px-4 py-3 font-medium">Especialidades</th>
               <th className="px-4 py-3 font-medium">Acceso</th>
               <th className="px-4 py-3 font-medium">Creado</th>
               <th className="px-4 py-3 font-medium">Nueva contraseña</th>
@@ -126,6 +133,34 @@ export default async function UsuariosPage() {
                     >
                       {roleLabels[u.role] ?? u.role}
                     </span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <details>
+                      <summary className="cursor-pointer select-none text-xs text-slate-600 hover:text-teal-700">
+                        {parseMulti(u.especialidad).length > 0 ? parseMulti(u.especialidad).join(", ") : "Sin especialidad — editar"}
+                      </summary>
+                      <form action={actualizarEspecialidades} className="mt-2 flex flex-col gap-1.5">
+                        <input type="hidden" name="userId" value={u.id} />
+                        {ESPECIALIDADES.map((esp) => (
+                          <label key={esp} className="flex items-center gap-2 text-xs text-slate-600">
+                            <input
+                              type="checkbox"
+                              name="especialidad"
+                              value={esp}
+                              defaultChecked={parseMulti(u.especialidad).includes(esp)}
+                              className="h-3.5 w-3.5 rounded border-slate-300 text-teal-600 focus:ring-teal-500/30"
+                            />
+                            {esp}
+                          </label>
+                        ))}
+                        <button
+                          type="submit"
+                          className="mt-1 self-start rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-200"
+                        >
+                          Guardar
+                        </button>
+                      </form>
+                    </details>
                   </td>
                   <td className="px-4 py-3">
                     {isSelf || isLastAdmin ? (
