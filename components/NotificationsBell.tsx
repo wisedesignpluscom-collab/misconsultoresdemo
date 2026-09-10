@@ -6,13 +6,15 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 type Alerts = {
-  avisos?: { id: string; titulo: string; cuerpo: string | null; url: string | null }[];
+  avisos?: { id: string; titulo: string; cuerpo: string | null; url: string | null; urgente?: boolean }[];
   aprobaciones?: { id: string; titulo: string; tipo: string; solicitante: string }[];
   tareas: { id: string; titulo: string; contacto: string | null }[];
   posventa: { id: string; cliente: string; negocio: string }[];
   estancadas: { id: string; titulo: string; dias: number }[];
-  mensajesCliente?: { id: string; companyId: string; cliente: string; extracto: string }[];
+  mensajesCliente?: { id: string; companyId: string; cliente: string; extracto: string; urgente?: boolean }[];
 };
+
+type AlertaUrgente = { id: string; titulo: string; cuerpo: string; url: string };
 
 // Beep corto de dos notas — sin depender de un archivo de audio.
 function reproducirSonidoAviso() {
@@ -38,17 +40,17 @@ function reproducirSonidoAviso() {
   } catch {}
 }
 
-type MensajeCliente = { id: string; companyId: string; cliente: string; extracto: string };
-
 export default function NotificationsBell() {
   const [alerts, setAlerts] = useState<Alerts | null>(null);
   const [open, setOpen] = useState(false);
-  const [toasts, setToasts] = useState<MensajeCliente[]>([]);
+  const [urgentes, setUrgentes] = useState<AlertaUrgente[]>([]);
   const panelRef = useRef<HTMLDivElement>(null);
   const pathname = usePathname();
-  const vistosRef = useRef<Set<string> | null>(null);
+  const vistosUrgentesRef = useRef<Set<string> | null>(null);
 
-  // Cargar alertas al entrar, al navegar y cada 60 segundos
+  // Cargar alertas al entrar, al navegar y cada pocos segundos — "tiempo real"
+  // por sondeo rápido (no WebSockets: Vercel Hobby no sostiene bien conexiones
+  // largas; esto funciona igual de bien ahí y en el servidor local).
   useEffect(() => {
     let active = true;
     const load = () =>
@@ -58,38 +60,48 @@ export default function NotificationsBell() {
           if (!active) return;
           setAlerts(data);
 
-          // Mensajes de cliente nunca vistos en esta pestaña → toast + sonido.
-          // La primera carga solo "memoriza" los existentes (no dispara avisos
-          // retroactivos de mensajes que ya estaban ahí antes de abrir el sistema).
           const idsActuales = data.mensajesCliente ?? [];
-          if (vistosRef.current === null) {
-            vistosRef.current = new Set(idsActuales.map((m) => m.id));
+
+          // Alertas "grandes y rojas": avisos.urgente=true (tarea nueva
+          // asignada por chat, aviso a facturación…) + todo mensajeCliente
+          // (siempre urgente). Aparecen encima de CUALQUIER módulo, no solo
+          // en la campanita — pedido explícito del cliente.
+          const urgentesActuales: AlertaUrgente[] = [
+            ...(data.avisos ?? [])
+              .filter((a) => a.urgente)
+              .map((a) => ({ id: a.id, titulo: a.titulo, cuerpo: a.cuerpo ?? "", url: a.url ?? "/" })),
+            ...idsActuales
+              .filter((m) => m.urgente)
+              .map((m) => ({ id: `msg-${m.id}`, titulo: `💬 ${m.cliente} te escribió`, cuerpo: m.extracto, url: `/empresas/${m.companyId}#chat` })),
+          ];
+          if (vistosUrgentesRef.current === null) {
+            vistosUrgentesRef.current = new Set(urgentesActuales.map((u) => u.id));
           } else {
-            const nuevos = idsActuales.filter((m) => !vistosRef.current!.has(m.id));
-            if (nuevos.length > 0) {
-              nuevos.forEach((m) => vistosRef.current!.add(m.id));
-              setToasts((prev) => [...nuevos, ...prev].slice(0, 4));
+            const nuevas = urgentesActuales.filter((u) => !vistosUrgentesRef.current!.has(u.id));
+            if (nuevas.length > 0) {
+              nuevas.forEach((u) => vistosUrgentesRef.current!.add(u.id));
+              setUrgentes((prev) => [...nuevas, ...prev].slice(0, 5));
               reproducirSonidoAviso();
             }
           }
         })
         .catch(() => {});
     load();
-    const interval = setInterval(load, 60000);
+    const interval = setInterval(load, 3000);
     return () => {
       active = false;
       clearInterval(interval);
     };
   }, [pathname]);
 
-  const cerrarToast = (id: string) => setToasts((prev) => prev.filter((t) => t.id !== id));
+  const cerrarUrgente = (id: string) => setUrgentes((prev) => prev.filter((u) => u.id !== id));
 
-  // Autocierre de cada toast a los 12s para que no se acumulen en pantalla
+  // Las urgentes duran 20s: son las que de verdad no se pueden perder
   useEffect(() => {
-    if (toasts.length === 0) return;
-    const timers = toasts.map((t) => setTimeout(() => cerrarToast(t.id), 12000));
+    if (urgentes.length === 0) return;
+    const timers = urgentes.map((u) => setTimeout(() => cerrarUrgente(u.id), 20000));
     return () => timers.forEach(clearTimeout);
-  }, [toasts]);
+  }, [urgentes]);
 
   // Cerrar al hacer clic fuera
   useEffect(() => {
@@ -265,41 +277,40 @@ export default function NotificationsBell() {
         </div>
       )}
 
-      {/* Avisos flotantes de mensajes nuevos — en un portal a <body>, porque el
-          Sidebar móvil usa transition-transform y eso vuelve "fixed" relativo
-          a él en vez de a toda la pantalla si se renderiza aquí adentro. */}
-      {toasts.length > 0 &&
+      {/* Alerta grande y roja — encima de CUALQUIER módulo. Portal a <body>
+          para que no la corte ningún contenedor con overflow/transform. */}
+      {urgentes.length > 0 &&
         typeof document !== "undefined" &&
         createPortal(
-          <div className="fixed bottom-4 right-4 z-[60] flex w-80 max-w-[calc(100vw-2rem)] flex-col gap-2">
-            {toasts.map((m) => (
-              <div
-                key={m.id}
-                className="flex items-start gap-3 rounded-xl border border-teal-200 bg-white p-4 shadow-lg ring-1 ring-black/5 animate-[toast-in_0.2s_ease-out]"
+          <div className="fixed inset-x-0 top-0 z-[70] flex flex-col gap-1 p-2">
+            {urgentes.map((u) => (
+              <Link
+                key={u.id}
+                href={u.url}
+                onClick={() => cerrarUrgente(u.id)}
+                className="flex items-center gap-3 rounded-lg bg-red-600 px-4 py-3 shadow-lg ring-2 ring-red-800/40 animate-[toast-in_0.2s_ease-out] hover:bg-red-700"
               >
-                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-teal-500 text-white">
-                  💬
+                <span className="min-w-0 flex-1">
+                  <p className="text-base font-bold text-white">{u.titulo}</p>
+                  {u.cuerpo && <p className="truncate text-sm text-red-50">{u.cuerpo}</p>}
                 </span>
-                <Link
-                  href={`/empresas/${m.companyId}#chat`}
-                  onClick={() => cerrarToast(m.id)}
-                  className="min-w-0 flex-1"
-                >
-                  <p className="text-sm font-semibold text-slate-900">Mensaje de {m.cliente}</p>
-                  <p className="truncate text-xs text-slate-500">{m.extracto}</p>
-                </Link>
                 <button
-                  onClick={() => cerrarToast(m.id)}
-                  aria-label="Cerrar aviso"
-                  className="shrink-0 text-slate-400 hover:text-slate-600"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    cerrarUrgente(u.id);
+                  }}
+                  aria-label="Cerrar alerta"
+                  className="shrink-0 rounded-md px-2 py-1 text-lg font-bold text-white/80 hover:bg-red-800 hover:text-white"
                 >
                   ✕
                 </button>
-              </div>
+              </Link>
             ))}
           </div>,
           document.body
         )}
+
     </div>
   );
 }

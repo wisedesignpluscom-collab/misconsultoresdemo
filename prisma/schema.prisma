@@ -39,6 +39,7 @@ model User {
   deals                      Deal[]               @relation("DealOwner")
   pendingDeals               Deal[]               @relation("DealPendingBy")
   portalUsersCreados         PortalUser[]         @relation("PortalUserCreatedBy")
+  notifications              Notification[]
   mensajesChatEnviados       MensajeChat[]        @relation("MensajeChatAutorStaff")
   companiesAsAnalista        Company[]            @relation("CompanyAnalista")
   companiesAsSupervisor      Company[]            @relation("CompanySupervisor")
@@ -228,13 +229,21 @@ model WorkflowJob {
 }
 
 // Avisos de la campanita generados por la acción «enviar_notificacion».
-// Instalación de empresa única: los ven todos los usuarios (sin destinatario).
+// Instalación de empresa única: por defecto los ven todos los usuarios (sin
+// destinatario) — userId null. Un destinatario puntual (ej. "te asignaron esta
+// tarea por chat") pone userId y ese aviso solo lo ve esa persona.
 model Notification {
   id        String    @id @default(cuid())
   title     String
   body      String?
   // Destino al hacer clic (ruta interna, ej. "/pipeline")
   url       String?
+  // null = broadcast (todos la ven); con valor = solo ese usuario
+  userId    String?
+  user      User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Alerta grande y roja en cualquier módulo, no solo la campanita discreta
+  // (ej. tarea nueva asignada por chat, mensaje de un cliente propio)
+  urgente   Boolean   @default(false)
   readAt    DateTime?
   createdAt DateTime  @default(now())
 }
@@ -957,6 +966,24 @@ model MensajeChat {
   archivoTamano Int?
 
   @@index([companyId, createdAt])
+}
+
+// Enrutamiento automático del chat del portal: cuando el CLIENTE escribe un
+// mensaje con una "frase de intención" (ver lib/chatAsignacion.ts, ej. "nueva
+// asignación") y una de estas palabras clave, se crea una Task asignada al
+// User cuya User.especialidad coincida — no al analista principal de la
+// cuenta. Configurable desde /configuracion (solo admin), no hardcodeada.
+model PalabraClaveChat {
+  id           String   @id @default(cuid())
+  // Normalizada (minúsculas, sin acentos) al guardar y al comparar.
+  palabra      String
+  // Debe coincidir con un valor de User.especialidad (multi-valor, lib/multivalor.ts)
+  especialidad String
+  activa       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([palabra, especialidad])
 }
 
 // Configuración de nómina del cliente (2.3-2.4) — un registro por cliente,

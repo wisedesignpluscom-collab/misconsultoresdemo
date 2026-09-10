@@ -26,6 +26,8 @@ import { contextoFiscal, conContexto, periodoActual } from "@/lib/fiscal/data";
 import { parseCampos } from "@/lib/fases";
 import NominaRiesgoSettings from "@/components/nomina/NominaRiesgoSettings";
 import { getConfigRiesgoNomina } from "@/lib/nominaSettings";
+import PalabrasClaveChatPanel from "@/components/configuracion/PalabrasClaveChatPanel";
+import { parseMulti } from "@/lib/multivalor";
 
 export const dynamic = "force-dynamic";
 
@@ -53,6 +55,8 @@ export default async function ConfiguracionPage() {
     ctxFiscal,
     salarios,
     configRiesgoNomina,
+    reglasChat,
+    usuariosConEspecialidad,
   ] = await Promise.all([
     prisma.catalogOption.findMany({ orderBy: [{ order: "asc" }, { label: "asc" }] }),
     prisma.pipelineStage.findMany({
@@ -79,7 +83,13 @@ export default async function ConfiguracionPage() {
     contextoFiscal(anioFiscal),
     prisma.salarioMinimo.findMany({ orderBy: { vigenteDesde: "desc" } }),
     getConfigRiesgoNomina(),
+    prisma.palabraClaveChat.findMany({ orderBy: { palabra: "asc" } }),
+    prisma.user.findMany({ where: { especialidad: { not: null } }, select: { especialidad: true } }),
   ]);
+
+  const especialidadesEnUso = [
+    ...new Set(usuariosConEspecialidad.flatMap((u) => parseMulti(u.especialidad))),
+  ].sort();
 
   // Vista previa: cómo queda la fecha límite del período en curso de cada
   // obligación con los datos cargados hoy (el RIF de ejemplo termina en 0 para
@@ -379,6 +389,9 @@ export default async function ConfiguracionPage() {
         salarios={salarios}
         umbralCaidaPeriodo={configRiesgoNomina.umbralCaidaPeriodo}
       />
+
+      {/* Asignación automática por chat del portal */}
+      <PalabrasClaveChatPanel reglas={reglasChat} especialidadesEnUso={especialidadesEnUso} />
 
       {/* Servicios y precios de las oportunidades */}
       <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">

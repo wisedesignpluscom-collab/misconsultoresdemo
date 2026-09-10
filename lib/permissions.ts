@@ -89,6 +89,11 @@ export function companyScope(s: Sess) {
           { supervisorId: s.id },
           { contacts: { some: { ownerId: s.id } } },
           { deals: { some: { ownerId: s.id } } },
+          // Asignación automática por chat (lib/chatAsignacion.ts): mientras
+          // la tarea siga abierta, el especialista puede ver/atender la
+          // cuenta aunque no sea el analista principal — no cierra su acceso
+          // al terminar, así puede seguir dando seguimiento si hace falta.
+          { contacts: { some: { tasks: { some: { ownerId: s.id, title: { startsWith: "Nueva asignación (chat)" } } } } } },
         ],
       }
     : {};

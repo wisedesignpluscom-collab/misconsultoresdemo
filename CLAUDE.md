@@ -1315,7 +1315,132 @@ como `mensajesCliente` sin leer. Datos de prueba del E2E borrados después.
 estatus de solo lectura y chat interno bidireccional, todo en un sistema
 aislado del CRM (`§21-22`).
 
-*Última actualización: el chat interno del portal de clientes F2 (§22), sobre
-el portal de clientes F1 (§21), el instalador `.exe` compilable desde macOS
-(§20), las migraciones versionadas (§19), el cierre de la adaptación contable
-(§18) y el Automation Engine (§7-8).*
+---
+
+## 23. Chat del portal — asignación automática de tareas por especialidad — 2026-09-10
+
+El chat de F2 (§22) ganó un "cerebro" de enrutamiento: un mensaje del cliente con
+intención de pedir trabajo (ej. "necesito una nueva asignación de nómina") crea
+o acumula una tarea para el especialista correcto, sin que nadie del staff tenga
+que estar mirando el chat en vivo. **Nota de estado: esta sección documenta
+trabajo construido en el worktree `sistema-local-vercel-status-27cfbc`
+(rama `claude/sistema-local-vercel-status-27cfbc`) que a la fecha de esta
+actualización SIGUE SIN COMMITEAR** — a diferencia de las fases anteriores de
+este documento, que describen trabajo ya en `main`. Ver "Pendiente" al final.
+
+**Modelo (aditivo):** `PalabraClaveChat` (`palabra`, `especialidad`) — catálogo
+editable de qué palabra dispara qué especialidad. `Notification` ganó
+`userId String?` (antes era siempre para "todo el staff visible"; ahora puede
+apuntar a una persona) y `urgente Boolean @default(false)` para el aviso rojo
+de alta prioridad.
+
+**Detección de intención** — `lib/chatAsignacion.ts` (puro, sin Prisma): 
+`normalizarTexto` (sin acentos/mayúsculas, así "asignación"/"asignacion" son la
+misma palabra), `FRASES_INTENCION` ("nueva asignación", "asignación adicional",
+variantes con/sin acento), `tieneIntencionDeAsignacion` y
+`especialidadDetectada` (cruza el texto contra `PalabraClaveChat` normalizado).
+
+**Acumulación en una sola tarea** — `lib/chat.ts` (`crearMensaje` /
+`procesarMensajeCliente` / `crearTareaPorAsignacionAutomatica`): cuando un
+mensaje dispara intención de asignación, se busca una `Task` abierta ya creada
+por este mecanismo para esa empresa+especialidad mediante un marcador oculto en
+`Task.description` (`[[chat-auto:${companyId}:${especialidad}]]`) — si existe,
+el mensaje nuevo se anexa a su descripción en vez de crear una tarea aparte
+(resuelve el caso real que motivó la función: el cliente manda la petición en
+varios mensajes seguidos, ej. texto + foto de cédula + aclaración). Si no
+existe, se crea una nueva asignada al primer usuario con esa `especialidad`.
+`avisarUrgente` dispara además una `Notification` con `urgente: true` dirigida
+a ese usuario. Un mensaje de facturación adicional avisa (una sola vez por
+tarea nueva) a los usuarios con especialidad "Facturación", salvo que ya sean
+el asignado.
+
+**Alcance de acceso ampliado** — el especialista que recibe una tarea de chat
+automática necesita poder ver esa empresa aunque no sea su analista/supervisor
+asignado. Se agregó la misma cláusula `OR` en dos lugares que **deben
+mantenerse sincronizados a mano** (riesgo real, ver más abajo):
+- `lib/permissions.ts` → `companyScope()`
+- `lib/ownership.ts` → `canAccessCompany()`
+
+Ambas agregan: `contacts.some(tasks.some(ownerId: user, title startsWith
+"Nueva asignación (chat)"))`. **Esta duplicación causó un bug real** durante el
+desarrollo (un especialista recién asignado recibía 404 al abrir la empresa
+por URL directa porque solo se había actualizado `permissions.ts`) — corregido,
+pero queda como **recomendación pendiente**: `canAccessCompany` debería llamar
+a `companyScope` directamente en vez de repetir la condición.
+
+**Alertas casi en tiempo real** — `components/NotificationsBell.tsx`: el
+intervalo de sondeo bajó de 60000ms a **3000ms** (decisión explícita del
+cliente: sondeo rápido en vez de WebSockets, por simplicidad de
+infraestructura). Se agregó un **banner rojo de ancho completo** (portal a
+`document.body`, con dedupe vía un `ref` de IDs ya vistos) para toda alerta
+`urgente: true`, visible en cualquier módulo del CRM — no solo en el chat.
+`app/api/alertas/route.ts`: la consulta de `avisos` ahora incluye
+`OR:[{userId:null},{userId:session.id}]` (compatibilidad con notificaciones de
+sistema sin dueño + las nuevas dirigidas a una persona); tanto `avisos` como
+`mensajesCliente` devuelven el campo `urgente`.
+
+**UI de especialidades** — `app/(crm)/usuarios/page.tsx` +
+`actions.ts` (`actualizarEspecialidades`): editor de checkboxes en la ficha de
+cada usuario para asignar 0-N especialidades (multi-valor, mismo patrón de
+`lib/multivalor.ts` de F1 contable). `app/(crm)/configuracion/
+chat-asignacion-actions.ts` + `components/configuracion/
+PalabrasClaveChatPanel.tsx`: ABM de `PalabraClaveChat` desde Configuración
+(mismo patrón visual de los demás catálogos).
+
+**Bug corregido en el camino:** un mensaje de cliente producía **dos** señales
+de urgencia simultáneas — una `Notification` explícita (`avisarUrgente`) y una
+entrada en la lista de `mensajesCliente` sin leer (mecanismo ya existente de
+F2, también marcado urgente) — así que el banner rojo aparecía duplicado por
+el mismo evento. Se quitó la llamada explícita a `avisarUrgente` para
+"cualquier mensaje de cliente", dejando que solo el mecanismo de asignación
+automática (tarea nueva/acumulada) dispare la notificación dirigida; el
+mecanismo de "mensaje sin leer" de F2 sigue cubriendo la alerta general.
+
+**Reset de datos demo:** se recortó la demo a **9 clientes reales** con
+procesos nuevos (`scripts/recortar-9-clientes.ts`, un solo uso, **borrado**
+después de correrlo) y se crearon accesos para todos:
+- `scripts/limpiar-nomina-chat.ts` (conservado, reutilizable) — limpieza
+  bottom-up de nómina/chat/portal antes de borrar una `Company`, porque
+  `CorridaLinea.conceptoId → ConceptoNomina` es `onDelete: Restrict` y
+  bloquea el borrado en cascada mientras exista una corrida calculada.
+- `scripts/setup-especialistas-portal.ts` (conservado, reutilizable) — crea
+  un usuario por especialidad (Tributario/Laboral/Legal/Facturación/
+  Auditoría), siembra `PalabraClaveChat`, y crea un `PortalUser` por cada uno
+  de los 9 clientes restantes.
+
+**Verificación E2E realizada en esta sesión** (contra la BD real del
+worktree, con asserts SQLite directos, no solo capturas de UI): mensaje del
+portal con "necesito una nueva asignación de nómina" → tarea creada y asignada
+al especialista Laboral con el marcador oculto correcto; segundo mensaje del
+mismo cliente en la misma conversación → se acumula en la MISMA tarea (no crea
+una segunda); especialista con tarea de chat accede a la empresa por URL
+directa aunque no sea su analista; banner rojo aparece una sola vez por evento
+urgente (verificado el fix de duplicación); especialidades editables desde
+`/usuarios` con checkboxes; palabras clave editables desde `/configuracion`
+con y sin acento detectando la misma especialidad.
+
+**Pendiente — nada de lo anterior está en `main` todavía:** este bloque de
+trabajo (modelo `PalabraClaveChat`, columnas nuevas en `Notification`,
+`lib/chatAsignacion.ts`, reescritura de `lib/chat.ts`, cambios en
+`permissions.ts`/`ownership.ts`, UI de especialidades, sondeo a 3s + banner
+rojo, y los scripts de reset de demo) vive solo en el worktree
+`sistema-local-vercel-status-27cfbc` sin commit ni push. Antes de darlo por
+cerrado falta: revisar el diff completo, decidir si se commitea de una vez o
+por partes, y correr la batería de pruebas del repo (`evaluator`, `chat`, etc.)
+contra los cambios antes de fusionar a `main`.
+
+*Última actualización: el chat de asignación automática por especialidad
+(§23, **sin commitear**), sobre el chat interno del portal de clientes F2
+(§22), el portal de clientes F1 (§21), el instalador `.exe` compilable desde
+macOS (§20), las migraciones versionadas (§19), el cierre de la adaptación
+contable (§18) y el Automation Engine (§7-8).*
+
+<!-- BEGIN:nextjs-agent-rules -->
+
+# This is NOT the Next.js you know
+
+This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
+
+This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
+
+<!-- END:nextjs-agent-rules -->
