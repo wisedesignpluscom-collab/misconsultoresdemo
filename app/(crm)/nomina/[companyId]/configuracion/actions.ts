@@ -296,9 +296,10 @@ export async function crearAporte(formData: FormData) {
   const tipo = formData.get("tipo") as string;
   const porcentaje = Number(formData.get("porcentaje"));
   if (!nombre || !(TIPOS_APORTE as readonly string[]).includes(tipo) || !Number.isFinite(porcentaje) || porcentaje < 0) return;
+  const ente = (formData.get("ente") as string)?.trim() || null;
   const cuentaContable = (formData.get("cuentaContable") as string)?.trim() || null;
 
-  await prisma.aporteLegal.create({ data: { companyId, nombre, tipo, porcentaje, cuentaContable } });
+  await prisma.aporteLegal.create({ data: { companyId, nombre, tipo, porcentaje, ente, cuentaContable } });
   revalidatePath(`/nomina/${companyId}/configuracion`);
 }
 
@@ -313,11 +314,12 @@ export async function actualizarAporte(formData: FormData) {
   const nombre = (formData.get("nombre") as string)?.trim();
   const porcentaje = Number(formData.get("porcentaje"));
   if (!nombre || !Number.isFinite(porcentaje) || porcentaje < 0) return;
+  const ente = (formData.get("ente") as string)?.trim() || null;
   const cuentaContable = (formData.get("cuentaContable") as string)?.trim() || null;
 
   await prisma.aporteLegal.update({
     where: { id },
-    data: { nombre, porcentaje, cuentaContable, activo: formData.get("activo") === "on" },
+    data: { nombre, porcentaje, ente, cuentaContable, activo: formData.get("activo") === "on" },
   });
   revalidatePath(`/nomina/${companyId}/configuracion`);
 }
@@ -354,4 +356,16 @@ export async function asegurarCatalogosNomina(companyId: string) {
       })
     ),
   ]);
+
+  // Backfill (Etapa 3.7): clientes configurados antes de que existiera `ente`
+  // tienen sus aportes estándar con ente=null — sin esto, nunca generarían
+  // cuenta por pagar aunque el cliente ya tenga años operando.
+  await Promise.all(
+    APORTES_ESTANDAR.filter((a) => a.ente).map((a) =>
+      prisma.aporteLegal.updateMany({
+        where: { companyId, clave: a.clave, isSystem: true, ente: null },
+        data: { ente: a.ente },
+      })
+    )
+  );
 }

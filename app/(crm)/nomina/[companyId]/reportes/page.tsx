@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { estadoCorridaLabels, estadoCorridaClass } from "@/lib/corridas";
 import { estadoVacacionesLabels, estadoUtilidadesLabels, estadoLiquidacionLabels } from "@/lib/lottt";
 import { fechaLocal } from "@/lib/fiscal/vencimientos";
+import { marcarAportePagado, revertirPagoAporte } from "../operacion/actions";
 
 export const dynamic = "force-dynamic";
 
@@ -132,9 +133,7 @@ export default async function ReportesNominaPage({
         <div className="p-5">
           {activa === "costo_corrida" && <TablaCostoPorCorrida corridas={corridas} />}
           {activa === "asistencia" && <TablaAsistencia companyId={companyId} desde={desde} hasta={hasta} />}
-          {activa === "cuentas_por_pagar" && (
-            <TablaCuentasPorPagar companyId={companyId} totalBruto={totalBruto} desde={desde} hasta={hasta} />
-          )}
+          {activa === "cuentas_por_pagar" && <TablaCuentasPorPagar companyId={companyId} desde={desde} hasta={hasta} />}
           {activa === "lottt" && <TablaLottt companyId={companyId} desde={desde} hasta={hasta} />}
         </div>
       </div>
@@ -218,64 +217,17 @@ async function TablaAsistencia({ companyId, desde, hasta }: { companyId: string;
   );
 }
 
-type FilaCuentaPorPagar = {
-  nombre: string;
-  pctTrabajador: number | null;
-  montoTrabajador: number;
-  pctPatronal: number | null;
-  montoPatronal: number;
-  cuentaTrabajador: string | null;
-  cuentaPatronal: string | null;
-  accion: "faov_txt" | "islr_xml" | null;
-};
-
-async function TablaCuentasPorPagar({
-  companyId,
-  totalBruto,
-  desde,
-  hasta,
-}: {
-  companyId: string;
-  totalBruto: number;
-  desde: Date;
-  hasta: Date;
-}) {
-  const aportes = await prisma.aporteLegal.findMany({ where: { companyId, activo: true }, orderBy: { nombre: "asc" } });
-  if (aportes.length === 0 || totalBruto === 0) {
-    return <p className="text-sm text-slate-400">Sin aportes de ley activos, o sin bruto en el rango para estimar.</p>;
-  }
-
-  // Agrupa por ente/concepto (el mismo nombre, "IVSS", tiene fila de trabajador
-  // y de patronal por separado en AporteLegal) para mostrar ambas tasas juntas
-  // y sumarlas en un solo "Estimado por pagar".
-  const filas = new Map<string, FilaCuentaPorPagar>();
-  for (const a of aportes) {
-    const fila = filas.get(a.nombre) ?? {
-      nombre: a.nombre,
-      pctTrabajador: null,
-      montoTrabajador: 0,
-      pctPatronal: null,
-      montoPatronal: 0,
-      cuentaTrabajador: null,
-      cuentaPatronal: null,
-      accion: null,
-    };
-    const monto = (totalBruto * a.porcentaje) / 100;
-    if (a.tipo === "patronal") {
-      fila.pctPatronal = a.porcentaje;
-      fila.montoPatronal = monto;
-      fila.cuentaPatronal = a.cuentaContable;
-    } else {
-      // "trabajador" y "retencion" comparten la columna de retenido: ambos se
-      // descuentan del trabajador, la diferencia es solo si tienen contraparte patronal.
-      fila.pctTrabajador = a.porcentaje;
-      fila.montoTrabajador = monto;
-      fila.cuentaTrabajador = a.cuentaContable;
-    }
-    if (a.nombre.toLowerCase().includes("faov")) fila.accion = "faov_txt";
-    if (a.nombre.toLowerCase().includes("islr")) fila.accion = "islr_xml";
-    filas.set(a.nombre, fila);
-  }
+// Cuentas por pagar reales de nómina (Etapa 3.7): retención del trabajador +
+// aporte patronal por ente, generadas al calcular cada corrida
+// (lib/aportesPatronales.ts) — ya no es un estimado en vivo. Los exportables
+// de FAOV/ISLR (Fase 4) quedan aparte, arriba: leen directo de AporteLegal y
+// las corridas del rango, así que no dependen de que el ente esté asignado.
+async function TablaCuentasPorPagar({ companyId, desde, hasta }: { companyId: string; desde: Date; hasta: Date }) {
+  const aportes = await prisma.aportePorPagar.findMany({
+    where: { companyId, corrida: { fechaInicio: { lte: hasta }, fechaFin: { gte: desde } } },
+    include: { corrida: { select: { periodo: true } } },
+    orderBy: [{ ente: "asc" }, { fechaGeneracion: "asc" }],
+  });
 
   const qs = new URLSearchParams({
     companyId,
@@ -283,59 +235,88 @@ async function TablaCuentasPorPagar({
     hasta: hasta.toISOString().slice(0, 10),
   }).toString();
 
+  const exportables = (
+    <div className="mb-4 flex flex-wrap gap-2">
+      <a
+        href={`/api/nomina/faov-txt?${qs}`}
+        className="rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-200"
+      >
+        Emitir .txt FAOV
+      </a>
+      <a
+        href={`/api/nomina/islr-xml?${qs}`}
+        className="rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-200"
+      >
+        Emitir XML ISLR
+      </a>
+    </div>
+  );
+
+  if (aportes.length === 0) {
+    return (
+      <div>
+        {exportables}
+        <p className="text-sm text-slate-400">
+          Sin cuentas por pagar en el rango. Se generan al calcular una corrida — asegúrate de que los
+          aportes de ley (Configuración → Parámetros legales) tengan un ente asignado.
+        </p>
+      </div>
+    );
+  }
+
+  const porEnte = new Map<string, number>();
+  for (const a of aportes) porEnte.set(a.ente, (porEnte.get(a.ente) ?? 0) + a.montoTotal);
+
   return (
     <div>
-      <p className="mb-3 text-xs text-slate-400">
-        Estimado con las tasas vigentes hoy sobre el bruto del rango — no reconstruye las tasas históricas de cada
-        corrida. Selecciona una fila para ver su cuenta contable.
-      </p>
+      {exportables}
+      <div className="mb-3 flex flex-wrap gap-3">
+        {[...porEnte.entries()].map(([ente, total]) => (
+          <div key={ente} className="rounded-lg border border-slate-200 px-3 py-2 text-xs">
+            <span className="font-semibold text-slate-700">{ente}</span>{" "}
+            <span className="text-slate-500">{money(total)}</span>
+          </div>
+        ))}
+      </div>
       <table className="min-w-full text-sm">
         <thead className="bg-slate-50 text-left text-xs text-slate-500">
           <tr>
-            <th className="px-3 py-2">Ente / concepto</th>
-            <th className="px-3 py-2">% Trabajador</th>
-            <th className="px-3 py-2">Retenido</th>
-            <th className="px-3 py-2">% Aporte patronal</th>
+            <th className="px-3 py-2">Ente</th>
+            <th className="px-3 py-2">Período</th>
+            <th className="px-3 py-2">Retención trabajador</th>
             <th className="px-3 py-2">Aporte patronal</th>
-            <th className="px-3 py-2">Estimado por pagar</th>
-            <th className="px-3 py-2">Acción</th>
+            <th className="px-3 py-2">Total</th>
+            <th className="px-3 py-2">Cuenta contable</th>
+            <th className="px-3 py-2">Estado</th>
+            <th className="px-3 py-2"></th>
           </tr>
         </thead>
         <tbody>
-          {[...filas.values()].map((f) => (
-            <tr key={f.nombre} className="border-t border-slate-100 align-top">
-              <td className="px-3 py-2 font-medium text-slate-800">
-                <details>
-                  <summary className="cursor-pointer select-none hover:text-teal-700">{f.nombre}</summary>
-                  <p className="mt-1 max-w-[16rem] text-xs font-normal text-slate-500">
-                    Cuenta trabajador: {f.cuentaTrabajador || "sin asignar"}
-                    <br />
-                    Cuenta patronal: {f.cuentaPatronal || "sin asignar"}
-                  </p>
-                </details>
-              </td>
-              <td className="px-3 py-2">{f.pctTrabajador !== null ? `${f.pctTrabajador}%` : "—"}</td>
-              <td className="px-3 py-2">{money(f.montoTrabajador)}</td>
-              <td className="px-3 py-2">{f.pctPatronal !== null ? `${f.pctPatronal}%` : "—"}</td>
-              <td className="px-3 py-2">{money(f.montoPatronal)}</td>
-              <td className="px-3 py-2 font-semibold">{money(f.montoTrabajador + f.montoPatronal)}</td>
+          {aportes.map((a) => (
+            <tr key={a.id} className="border-t border-slate-100">
+              <td className="px-3 py-2 font-medium text-slate-800">{a.ente}</td>
+              <td className="px-3 py-2 text-slate-500">{a.corrida.periodo}</td>
+              <td className="px-3 py-2">{money(a.montoTrabajador)}</td>
+              <td className="px-3 py-2">{money(a.montoPatronal)}</td>
+              <td className="px-3 py-2 font-semibold">{money(a.montoTotal)}</td>
+              <td className="px-3 py-2 text-slate-500">{a.cuentaContable ?? "—"}</td>
               <td className="px-3 py-2">
-                {f.accion === "faov_txt" && (
-                  <a
-                    href={`/api/nomina/faov-txt?${qs}`}
-                    className="rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-200"
-                  >
-                    Emitir .txt FAOV
-                  </a>
-                )}
-                {f.accion === "islr_xml" && (
-                  <a
-                    href={`/api/nomina/islr-xml?${qs}`}
-                    className="rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-200"
-                  >
-                    Emitir XML ISLR
-                  </a>
-                )}
+                <span
+                  className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
+                    a.estadoPago === "pagado" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"
+                  }`}
+                >
+                  {a.estadoPago === "pagado" ? "Pagado" : "Pendiente"}
+                </span>
+              </td>
+              <td className="px-3 py-2">
+                <form action={a.estadoPago === "pagado" ? revertirPagoAporte : marcarAportePagado}>
+                  <input type="hidden" name="companyId" value={companyId} />
+                  <input type="hidden" name="id" value={a.id} />
+                  <button type="submit" className="text-xs font-medium text-teal-700 hover:underline">
+                    {a.estadoPago === "pagado" ? "Revertir" : "Marcar pagada"}
+                  </button>
+                </form>
               </td>
             </tr>
           ))}

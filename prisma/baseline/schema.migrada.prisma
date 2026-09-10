@@ -688,6 +688,7 @@ model CorridaNomina {
   createdAt        DateTime         @default(now())
   updatedAt        DateTime         @updatedAt
   detalles         CorridaDetalle[]
+  aportesPorPagar  AportePorPagar[]
 
   @@unique([companyId, periodo])
 }
@@ -903,6 +904,7 @@ model Company {
   geocercas           Geocerca[]
   portalUsers         PortalUser[]
   mensajesChat        MensajeChat[]
+  aportesPorPagar     AportePorPagar[]
 }
 
 // ── Portal de clientes (acceso externo, solo lectura) ───────────────────────
@@ -1063,23 +1065,56 @@ model ConceptoNomina {
 // lista estándar de IVSS/RPE/FAOV/INCES se siembra una vez por cliente con
 // porcentajes editables (son la base, no un valor que no se pueda ajustar).
 model AporteLegal {
-  id         String   @id @default(cuid())
-  companyId  String
-  company    Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  id             String   @id @default(cuid())
+  companyId      String
+  company        Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
   // trabajador | patronal | retencion
-  tipo       String
-  clave      String?
-  nombre     String
-  porcentaje Float
+  tipo           String
+  clave          String?
+  nombre         String
+  porcentaje     Float
+  // IVSS | BANAVIH | INCES | SENIAT — agrupa trabajador+patronal del mismo
+  // ente al generar AportePorPagar. Libre para aportes propios del cliente
+  // (no isSystem) que no calcen en el catálogo estándar.
+  ente           String?
   // Código del plan de cuentas al que se asienta este concepto — cada aporte
   // se asigna a la suya (antes solo existían 4 cuentas globales por cliente).
+  // Se copia como snapshot a AportePorPagar al generarse, para no corregir
+  // retroactivamente si esta config cambia después.
   cuentaContable String?
-  activo     Boolean  @default(true)
-  isSystem   Boolean  @default(false)
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  activo         Boolean  @default(true)
+  isSystem       Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
   @@unique([companyId, clave])
+}
+
+// Cuenta por pagar real generada desde una corrida de nómina (trabajador +
+// patronal por ente). Idempotente por [corridaId, ente]: recalcular la
+// corrida no duplica ni "despaga" un registro ya marcado.
+model AportePorPagar {
+  id              String        @id @default(cuid())
+  corridaId       String
+  corrida         CorridaNomina @relation(fields: [corridaId], references: [id], onDelete: Cascade)
+  companyId       String
+  company         Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  ente            String
+  montoTrabajador Float         @default(0)
+  montoPatronal   Float         @default(0)
+  montoTotal      Float         @default(0)
+  moneda          String        @default("USD")
+  // Snapshot de AporteLegal.cuentaContable al momento de generarse
+  cuentaContable  String?
+  // pendiente | pagado
+  estadoPago      String        @default("pendiente")
+  fechaGeneracion DateTime      @default(now())
+  fechaPago       DateTime?
+  notas           String?
+
+  @@unique([corridaId, ente])
+  @@index([companyId])
+  @@index([estadoPago])
 }
 
 // Catálogo de jornadas laborales del cliente (2.3 "Horarios y jornadas").
